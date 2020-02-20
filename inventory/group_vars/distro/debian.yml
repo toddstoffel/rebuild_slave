@@ -1,0 +1,6 @@
+---
+
+mariabackup: mariadb-backup
+pigz: pigz
+socat: socat
+socket: /var/run/mysqld/mysqld.sock

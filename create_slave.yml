@@ -1,0 +1,139 @@
+---
+
+- hosts: "all"
+  become: true
+  become_user: root
+  vars_files:
+    - 'inventory/group_vars/distro/{{ ansible_os_family|lower }}.yml'
+
+  tasks:
+
+  - name: "Installing Additional Packages If Necessary"
+    package:
+      name: '{{ packages }}'
+      state: present
+    vars:
+      packages:
+      - '{{ pigz }}'
+      - '{{ socat }}'
+      - '{{ mariabackup }}'
+
+- hosts: "master"
+  become: true
+  become_user: root
+  vars_files:
+    - 'inventory/group_vars/distro/{{ ansible_os_family|lower }}.yml'
+
+  tasks:
+
+  - name: "Backup, Compress & Stream To Target"
+    shell: mariabackup --user={{ admin_user }} --backup --target-dir=/tmp --stream=xbstream --parallel={{ ansible_processor_vcpus }} | pigz -c | socat - TCP-LISTEN:4444,reuseaddr
+    async: 86400
+    poll: 0
+    register: socat_sleeper
+
+- hosts: "slave"
+  become: true
+  become_user: root
+  vars_files:
+    - 'inventory/group_vars/distro/{{ ansible_os_family|lower }}.yml'
+
+  tasks:
+
+  - name: "Checking If ColumnStore Is Installed"
+    stat:
+      path: /usr/bin/columnstore
+    register: cs_installed
+
+  - name: "Checking If ColumnStore Is Running"
+    command: pgrep ProcMon
+    register: cs_running
+    when: cs_installed.stat.exists == true
+
+  - name: "Getting ColumnStore Version"
+    command: mariadb --host={{ hostvars.master.ansible_host }} --user={{ repli_user }} --password={{ repli_pass }} -NB -e "SELECT PLUGIN_AUTH_VERSION FROM information_schema.ALL_PLUGINS WHERE PLUGIN_NAME = 'Columnstore'"
+    register: cs_version
+    when: cs_running is succeeded
+
+  - name: "Stopping MariaDB On Slave"
+    systemd:
+      name: mariadb
+      state: stopped
+    when: cs_installed.stat.exists == false or cs_version.stdout > '1.4.2'
+
+  - name: "Stopping MariaDB On Slave"
+    shell: mysql-Columnstore stop
+    when: cs_installed.stat.exists == true and cs_version.stdout < '1.4.3' and cs_running is succeeded
+
+  - name: "Emptying {{ datadir }}/"
+    shell: 'rm -rf {{ datadir }}/*'
+    args:
+      warn: false
+
+  - name: "Emptying {{ logdir }}/"
+    shell: 'rm -rf {{ logdir }}/*'
+    args:
+      warn: false
+
+  - name: "Receiving Stream From Master"
+    shell: socat -u TCP:{{ hostvars.master.ansible_host }}:4444 STDOUT | pigz -dc | mbstream -x
+    args:
+      chdir: '{{ datadir }}/'
+
+  - name: "Preparing Backup"
+    shell: mariabackup --user={{ admin_user }} --use-memory=1G --prepare --target-dir=/{{ datadir }}/
+
+  - name: "Changing Ownership Of Data Dir"
+    file:
+      path: '{{ datadir }}/'
+      recurse: yes
+      owner: mysql
+      group: mysql
+
+  - name: "Removing Empty ib_logfile*"
+    file:
+      path: '{{ datadir }}/ib_logfile*'
+      state: absent
+
+  - name: "Starting MariaDB On Slave"
+    systemd:
+      name: mariadb
+      state: started
+    when: cs_installed.stat.exists == false or cs_version.stdout > '1.4.2'
+
+  - name: "Starting MariaDB On Slave"
+    shell: mysql-Columnstore restart
+    when: cs_installed.stat.exists == true and cs_version.stdout < '1.4.3'
+
+  - name: "Getting Binlog File Name"
+    shell: awk '{print $1}' '{{ datadir }}/xtrabackup_binlog_info'
+    register: binlog_file
+
+  - name: "Getting Binlog Position Name"
+    shell: awk '{print $2}' '{{ datadir }}/xtrabackup_binlog_info'
+    register: binlog_pos
+
+  - name: "Getting GTID Information"
+    shell: awk '{print $3}' '{{ datadir }}/xtrabackup_binlog_info'
+    register: gtid_info
+    when: cs_installed.stat.exists == false
+
+  - name: "Setting Up Replication"
+    mysql_replication:
+      mode: changemaster
+      master_host: '{{ hostvars.master.ansible_host }}'
+      master_port: 3306
+      master_log_file: '{{ binlog_file.stdout }}'
+      master_log_pos: '{{ binlog_pos.stdout }}'
+      master_user: '{{ repli_user }}'
+      master_password: '{{ repli_pass }}'
+      login_unix_socket: '{{ socket }}'
+
+  - name: "Setting Slave GTID Position"
+    shell: mysql -e "SET GLOBAL gtid_slave_pos = '{{ gtid_info.stdout }}'; CHANGE MASTER TO master_use_gtid=slave_pos";
+    when: cs_installed.stat.exists == false
+
+  - name: "Starting Replication"
+    mysql_replication:
+      mode: startslave
+      login_unix_socket: '{{ socket }}'

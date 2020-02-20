@@ -1,0 +1,8 @@
+---
+
+admin_user: root
+admin_pass: none
+repli_user: idbrep
+repli_pass: C0lumnStore!
+datadir: /var/lib/mysql
+logdir: /var/log/mariadb
