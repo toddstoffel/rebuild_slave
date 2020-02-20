@@ -26,7 +26,7 @@ On the **slave**, it will:
 * [Git](https://git-scm.com/downloads)
 * Ports **4444** and **3306** must be open between your master and slave.
 * Port 22 must be open to your servers from whatever machine you run the playbook from.
-* Create replication user:
+* Create replication user following this example:
 ```
 GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'idbrep'@'10.%' IDENTIFIED BY 'C0lumnStore!';
 ```
