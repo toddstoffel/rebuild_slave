@@ -17,6 +17,7 @@
       - '{{ pigz }}'
       - '{{ socat }}'
       - '{{ mariabackup }}'
+      - '{{ python_mysql }}'
 
 - hosts: "master"
   become: true

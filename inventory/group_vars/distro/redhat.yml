@@ -4,3 +4,4 @@ mariabackup: MariaDB-backup
 pigz: pigz
 socat: socat
 socket: /var/lib/mysql/mysql.sock
+python_mysql: MySQL-python
