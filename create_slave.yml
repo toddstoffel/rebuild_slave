@@ -41,30 +41,10 @@
 
   tasks:
 
-  - name: "Checking If ColumnStore Is Installed"
-    stat:
-      path: /usr/bin/columnstore
-    register: cs_installed
-
-  - name: "Checking If ColumnStore Is Running"
-    command: pgrep ProcMon
-    register: cs_running
-    when: cs_installed.stat.exists == true
-
-  - name: "Getting ColumnStore Version"
-    command: mariadb --host={{ hostvars.master.ansible_host }} --user={{ repli_user }} --password={{ repli_pass }} -NB -e "SELECT PLUGIN_AUTH_VERSION FROM information_schema.ALL_PLUGINS WHERE PLUGIN_NAME = 'Columnstore'"
-    register: cs_version
-    when: cs_running is succeeded
-
   - name: "Stopping MariaDB On Slave"
     systemd:
       name: mariadb
       state: stopped
-    when: cs_installed.stat.exists == false or cs_version.stdout > '1.4.2'
-
-  - name: "Stopping MariaDB On Slave"
-    shell: mysql-Columnstore stop
-    when: cs_installed.stat.exists == true and cs_version.stdout < '1.4.3' and cs_running is succeeded
 
   - name: "Emptying {{ datadir }}/"
     shell: 'rm -rf {{ datadir }}/*'
@@ -100,11 +80,9 @@
     systemd:
       name: mariadb
       state: started
-    when: cs_installed.stat.exists == false or cs_version.stdout > '1.4.2'
 
   - name: "Starting MariaDB On Slave"
     shell: mysql-Columnstore restart
-    when: cs_installed.stat.exists == true and cs_version.stdout < '1.4.3'
 
   - name: "Getting Binlog File Name"
     shell: awk '{print $1}' '{{ datadir }}/xtrabackup_binlog_info'
@@ -117,7 +95,6 @@
   - name: "Getting GTID Information"
     shell: awk '{print $3}' '{{ datadir }}/xtrabackup_binlog_info'
     register: gtid_info
-    when: cs_installed.stat.exists == false
 
   - name: "Setting Up Replication"
     mysql_replication:
@@ -132,7 +109,6 @@
 
   - name: "Setting Slave GTID Position"
     shell: mysql -e "SET GLOBAL gtid_slave_pos = '{{ gtid_info.stdout }}'; CHANGE MASTER TO master_use_gtid=slave_pos";
-    when: cs_installed.stat.exists == false
 
   - name: "Starting Replication"
     mysql_replication:
