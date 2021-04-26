@@ -81,9 +81,6 @@
       name: mariadb
       state: started
 
-  - name: "Starting MariaDB On Slave"
-    shell: mysql-Columnstore restart
-
   - name: "Getting Binlog File Name"
     shell: awk '{print $1}' '{{ datadir }}/xtrabackup_binlog_info'
     register: binlog_file
